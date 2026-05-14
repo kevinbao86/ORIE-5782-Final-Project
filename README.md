@@ -82,13 +82,15 @@ volrisk backtest --prices data/raw/prices.csv --out reports/results.csv
 ```
 
 The CLI backtest runs the baseline strategies by default. Add `--include-rf` to include the slower
-Random Forest volatility strategy:
+Random Forest volatility strategy. The CLI uses the raw volatility target by default; use
+`--rf-target-transform log` to run the log-volatility target variant:
 
 ```bash
 volrisk backtest \
   --prices data/raw/prices.csv \
   --out reports/results.csv \
   --include-rf \
+  --rf-target-transform raw \
   --initial-train-days 756 \
   --refit-every 21
 ```
@@ -105,13 +107,22 @@ volrisk backtest \
    Uses an exponentially weighted volatility forecast and allocates inversely to forecasted
    volatility.
 
-4. **Inverse Random Forest forecast volatility**  
+4. **Inverse Random Forest forecast volatility, raw target**  
    Builds a pooled multi-asset supervised learning dataset from lagged return and volatility
-   features, trains a walk-forward `RandomForestRegressor`, forecasts each asset's forward
-   volatility, and allocates inversely to those forecasts.
+   features, trains a walk-forward `RandomForestRegressor` on forward realized volatility,
+   forecasts each asset's forward volatility, and allocates inversely to those forecasts.
+
+5. **Inverse Random Forest forecast volatility, log target**  
+   Uses the same Random Forest feature set and walk-forward protocol, but trains on
+   `log(target_vol)` and exponentiates predictions back to volatility before portfolio
+   construction.
 
 Portfolio weights are long-only and normalized to sum to one. The inverse-volatility strategies use
 a maximum per-asset weight cap of `0.35` in the main pipeline.
+
+The main pipeline reports both Random Forest variants. In current results, the raw-target RF model
+is the primary RF benchmark, while the log-target RF model is useful as an ablation/robustness
+comparison.
 
 ## Random Forest details
 
@@ -122,6 +133,11 @@ It includes:
 - rolling mean absolute returns
 - rolling mean returns
 - rolling realized volatility
+- rolling max absolute return
+- downside volatility
+- rolling drawdown
+- short/medium realized-volatility ratios
+- absolute-return shock, rank, and z-score features
 - an `asset` categorical feature for pooled multi-asset training
 
 For the one-day realized-volatility feature, the code uses absolute return times `sqrt(252)`.
@@ -131,22 +147,42 @@ training set when `lags` includes `1`.
 The multi-asset dataset attaches the target column before concatenating assets. This avoids pandas
 alignment problems caused by duplicate date indices across assets.
 
+The RF feature builder can keep final rows whose future target is not yet known by setting
+`drop_missing_target=False`. The walk-forward forecaster trains only on rows with known targets, but
+still predicts for all dates with available return-based features. This prevents the RF backtest from
+stopping `target_window` trading days before the end of the price data.
+
 `walk_forward_rf_forecast` trains only on dates before the forecast date and returns a wide
 Date x Asset volatility forecast matrix. It accepts both the current `initial_train_days` parameter
-and the legacy `initial_train_size` name for compatibility.
+and the legacy `initial_train_size` name for compatibility. It also supports
+`target_transform="raw"` and `target_transform="log"`.
 
 ## Outputs
 
 The full pipeline writes:
 
 - `reports/results.csv`
+- `reports/results_common_start.csv`
+- `reports/report.md`
 - `reports/equal_weight_backtest.csv`
 - `reports/inverse_realized_vol_backtest.csv`
 - `reports/inverse_ewma_vol_backtest.csv`
-- `reports/inverse_rf_forecast_vol_backtest.csv`
-- `reports/rf_vol_forecasts.csv`
+- `reports/inverse_rf_forecast_vol_raw_backtest.csv`
+- `reports/inverse_rf_forecast_vol_log_backtest.csv`
+- `reports/rf_vol_forecasts.csv` (raw-target RF forecasts, retained for compatibility)
+- `reports/rf_raw_vol_forecasts.csv`
+- `reports/rf_log_vol_forecasts.csv`
 - `reports/figures/cumulative_returns.png`
+- `reports/figures/cumulative_returns_common_start.png`
 - `reports/figures/drawdowns.png`
+
+The generated `reports/report.md` includes a short analysis, a conclusion, full-history metrics,
+common-start metrics, and the common-start cumulative returns figure.
+
+The common-start figure is important because the RF strategies begin after their initial training
+window. In the main pipeline this is `756` trading days, roughly three years, so the RF backtests
+start later than the baseline strategies. The common-start output rebases every strategy to the
+shared comparison window.
 
 ## Performance metrics
 
