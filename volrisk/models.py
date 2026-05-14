@@ -45,15 +45,42 @@ def build_random_forest_model(
             "abs_ret_mean_1d",
             "realized_vol_1d",
             "return_mean_1d",
+            "abs_ret_max_1d",
+            "abs_ret_rank_1d",
+            "abs_ret_shock_1d",
+            "abs_ret_zscore_1d",
+            "drawdown_1d",
+            "downside_vol_1d",
             "abs_ret_mean_5d",
             "realized_vol_5d",
             "return_mean_5d",
+            "abs_ret_max_5d",
+            "abs_ret_rank_5d",
+            "abs_ret_shock_5d",
+            "abs_ret_zscore_5d",
+            "drawdown_5d",
+            "downside_vol_5d",
             "abs_ret_mean_21d",
             "realized_vol_21d",
             "return_mean_21d",
+            "abs_ret_max_21d",
+            "abs_ret_rank_21d",
+            "abs_ret_shock_21d",
+            "abs_ret_zscore_21d",
+            "drawdown_21d",
+            "downside_vol_21d",
             "abs_ret_mean_63d",
             "realized_vol_63d",
             "return_mean_63d",
+            "abs_ret_max_63d",
+            "abs_ret_rank_63d",
+            "abs_ret_shock_63d",
+            "abs_ret_zscore_63d",
+            "drawdown_63d",
+            "downside_vol_63d",
+            "realized_vol_ratio_1_21d",
+            "realized_vol_ratio_5_21d",
+            "realized_vol_ratio_21_63d",
         ]
     categorical_features = ["asset"]
 
@@ -82,6 +109,7 @@ def walk_forward_rf_forecast(
     initial_train_days: int | None = None,
     refit_every: int = 21,
     random_state: int = 42,
+    target_transform: str = "log",
     *,
     initial_train_size: int | None = None,
 ) -> pd.DataFrame:
@@ -109,37 +137,51 @@ def walk_forward_rf_forecast(
         raise ValueError("refit_every must be positive")
     if "asset" not in X.columns:
         raise ValueError("X must contain an 'asset' column")
+    if target_transform not in {"log", "raw"}:
+        raise ValueError("target_transform must be either 'log' or 'raw'")
 
     data = X.copy()
     data["_target"] = y.to_numpy()
-    data = data.dropna(subset=["_target"]).sort_index()
+    data = data.sort_index()
 
     unique_dates = pd.Index(sorted(data.index.unique()))
-    if len(unique_dates) <= initial_train_days:
+    known_target_dates = pd.Index(sorted(data.loc[data["_target"].notna()].index.unique()))
+    if len(known_target_dates) < initial_train_days:
         raise ValueError(
             "Not enough unique dates for the requested initial_train_days. "
-            f"Got {len(unique_dates)}, requested {initial_train_days}."
+            f"Got {len(known_target_dates)}, requested {initial_train_days}."
         )
 
     pred_frames = []
     fitted_model: Pipeline | None = None
-    forecast_dates = unique_dates[initial_train_days:]
+    forecast_dates = [
+        date for date in unique_dates if (known_target_dates < date).sum() >= initial_train_days
+    ]
+    if not forecast_dates:
+        raise ValueError("No forecast dates available after the requested initial_train_days")
 
     for step, date in enumerate(forecast_dates):
         if fitted_model is None or step % refit_every == 0:
-            train_dates = unique_dates[: initial_train_days + step]
-            train = data.loc[data.index.isin(train_dates)]
+            train = data.loc[(data.index < date) & data["_target"].notna()]
             numeric_features = [
-                column for column in train.columns if column not in {"asset", "_target"}
+                column
+                for column in train.columns
+                if column not in {"asset", "_target"}
+                and pd.api.types.is_numeric_dtype(train[column])
             ]
             fitted_model = build_random_forest_model(
                 random_state=random_state,
                 numeric_features=numeric_features,
             )
-            fitted_model.fit(train.drop(columns=["_target"]), train["_target"])
+            train_target = train["_target"].clip(lower=1e-4)
+            if target_transform == "log":
+                train_target = np.log(train_target)
+            fitted_model.fit(train.drop(columns=["_target"]), train_target)
 
         test = data.loc[[date]].drop(columns=["_target"])
         pred_values = fitted_model.predict(test)
+        if target_transform == "log":
+            pred_values = np.exp(pred_values)
 
         pred_frames.append(
             pd.DataFrame(

@@ -35,6 +35,12 @@ def download(tickers: tuple[str, ...], start: str, end: str | None, out: str) ->
 @click.option("--transaction-cost-bps", default=1.0, type=float)
 @click.option("--include-rf/--no-include-rf", default=False, help="Include RF volatility strategy.")
 @click.option(
+    "--rf-target-transform",
+    type=click.Choice(["raw", "log"]),
+    default="raw",
+    help="Target transform for the RF volatility strategy.",
+)
+@click.option(
     "--initial-train-days",
     default=756,
     type=int,
@@ -46,6 +52,7 @@ def backtest(
     out: str,
     transaction_cost_bps: float,
     include_rf: bool,
+    rf_target_transform: str,
     initial_train_days: int,
     refit_every: int,
 ) -> None:
@@ -69,17 +76,25 @@ def backtest(
 
     if include_rf:
         click.echo("Building RF volatility forecasts...")
-        X_vol, y_vol = make_multi_asset_vol_dataset(returns, target_window=21, lags=(1, 5, 21, 63))
+        X_vol, y_vol = make_multi_asset_vol_dataset(
+            returns,
+            target_window=21,
+            lags=(1, 5, 21, 63),
+            drop_missing_target=False,
+        )
         rf_vol = walk_forward_rf_forecast(
             X_vol,
             y_vol,
             initial_train_days=initial_train_days,
             refit_every=refit_every,
             random_state=42,
+            target_transform=rf_target_transform,
         )
         Path("reports").mkdir(exist_ok=True)
-        rf_vol.to_csv("reports/rf_vol_forecasts.csv")
-        strategies["inverse_rf_forecast_vol"] = inverse_vol_weights(
+        rf_vol.to_csv(f"reports/rf_{rf_target_transform}_vol_forecasts.csv")
+        if rf_target_transform == "raw":
+            rf_vol.to_csv("reports/rf_vol_forecasts.csv")
+        strategies[f"inverse_rf_forecast_vol_{rf_target_transform}"] = inverse_vol_weights(
             rf_vol, max_weight=0.35
         ).reindex(returns.index).ffill()
 
