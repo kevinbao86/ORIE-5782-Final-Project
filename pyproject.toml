@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volrisk"
+version = "0.1.0"
+description = "Volatility forecasting and risk-aware portfolio allocation toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Kevin Bao"}]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "matplotlib>=3.7",
+    "yfinance>=0.2.40",
+    "click>=8.1",
+    "joblib>=1.3",
+    "pandas-datareader>=0.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+volrisk = "volrisk.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["volrisk*"]
+
+[tool.pytest.ini_options]
+addopts = "-q --cov=volrisk --cov-report=term-missing"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
